@@ -89,6 +89,7 @@ module Rack::Cache
 
       def initialize(root)
         @root = root
+        @scoped_stats = $statsd.scope("middleware.cache.disk")
         FileUtils.mkdir_p root, :mode => 0755
       end
 
@@ -97,7 +98,9 @@ module Rack::Cache
       end
 
       def read(key)
+        @scoped_stats.instrument("reads.content") do
         File.open(body_path(key), 'rb') { |f| f.read }
+        end
       rescue Errno::ENOENT
         nil
       end
@@ -120,6 +123,7 @@ module Rack::Cache
       end
 
       def write(body, ttl=nil)
+        @scoped_stats.instrument("writes.content") do
         filename = ['buf', $$, Thread.current.object_id].join('-')
         temp_file = storage_path(filename)
         key, size =
@@ -135,6 +139,7 @@ module Rack::Cache
           FileUtils.mv temp_file, path
         end
         [key, size]
+        end
       end
 
       def purge(key)

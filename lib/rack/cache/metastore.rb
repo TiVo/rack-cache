@@ -211,12 +211,16 @@ module Rack::Cache
 
       def initialize(root="/tmp/rack-cache/meta-#{ARGV[0]}")
         @root = File.expand_path(root)
+        @scoped_stats = $statsd.scope("middleware.cache.disk")
+
         FileUtils.mkdir_p(root, :mode => 0755)
       end
 
       def read(key)
         path = key_path(key)
+        @scoped_stats.instrument("reads.meta") do
         File.open(path, 'rb') { |io| Marshal.load(io) }
+        end
       rescue Errno::ENOENT, IOError
         []
       end
@@ -225,7 +229,9 @@ module Rack::Cache
         tries = 0
         begin
           path = key_path(key)
+          @scoped_stats.instrument("writes.meta") do
           File.open(path, 'wb') { |io| Marshal.dump(entries, io, -1) }
+          end
         rescue Errno::ENOENT, IOError
           Dir.mkdir(File.dirname(path), 0755)
           retry if (tries += 1) == 1
