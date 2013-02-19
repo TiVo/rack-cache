@@ -112,7 +112,7 @@ module Rack::Cache
     # Rack environment Hash. The default values Hash is merged in underneath
     # the Rack environment before each request is processed.
     def options
-      @env || @default_options
+      @default_options
     end
 
     # Set multiple options.

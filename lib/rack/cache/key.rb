@@ -17,14 +17,6 @@ module Rack::Cache
     # Generate a normalized cache key for the request.
     def generate
       parts = []
-      parts << @request.scheme << "://"
-      parts << @request.host
-
-      if @request.scheme == "https" && @request.port != 443 ||
-          @request.scheme == "http" && @request.port != 80
-        parts << ":" << @request.port.to_s
-      end
-
       parts << @request.script_name
       parts << @request.path_info
 
