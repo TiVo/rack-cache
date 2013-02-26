@@ -26,24 +26,35 @@ module Rack::Cache
     # Rack::Cache::Response object if the cache hits or nil if no cache entry
     # was found.
     def lookup(request, entity_store)
-      key = cache_key(request)
-      entries = read(key)
+      result = nil
+      begin
+        result = begin
+          key = cache_key(request)
+          entries = read(key)
 
-      # bail out if we have nothing cached
-      return nil if entries.empty?
+          # bail out if we have nothing cached
+          return nil if entries.empty?
 
-      # find a cached entry that matches the request.
-      env = request.env
-      match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
-      return nil if match.nil?
+          # find a cached entry that matches the request.
+          env = request.env
+          match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
+          return nil if match.nil?
 
-      _, res = match
-      if body = entity_store.open(res['X-Content-Digest'])
-        restore_response(res, body)
-      else
-        # TODO the metastore referenced an entity that doesn't exist in
-        # the entitystore. we definitely want to return nil but we should
-        # also purge the entry from the meta-store when this is detected.
+          _, res = match
+          if body = entity_store.open(res['X-Content-Digest'])
+            restore_response(res, body)
+          else
+            # TODO the metastore referenced an entity that doesn't exist in
+            # the entitystore. we definitely want to return nil but we should
+            # also purge the entry from the meta-store when this is detected.
+          end
+        end
+      ensure
+        if result
+          $statsd.increment "middleware.cache.#{self.statsd_name}.HIT"
+        else
+          $statsd.increment "middleware.cache.#{self.statsd_name}.MISS"
+        end
       end
     end
 
@@ -208,12 +219,15 @@ module Rack::Cache
     # pairs on disk.
     class Disk < MetaStore
       attr_reader :root
-
       def initialize(root="/tmp/rack-cache/meta-#{ARGV[0]}")
         @root = File.expand_path(root)
         @scoped_stats = $statsd.scope("middleware.cache.disk")
 
         FileUtils.mkdir_p(root, :mode => 0755)
+      end
+
+      def statsd_name
+        "disk"
       end
 
       def read(key)
