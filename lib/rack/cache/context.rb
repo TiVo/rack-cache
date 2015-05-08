@@ -77,7 +77,7 @@ module Rack::Cache
 
       # write log message to rack.errors
       if verbose?
-        message = "cache: [%s %s] %s\n" %
+        message = "cache: [%s %s] %s" %
           [@request.request_method, @request.fullpath, trace]
         log_info(message)
       end
