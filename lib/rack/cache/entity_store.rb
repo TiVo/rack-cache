@@ -89,6 +89,7 @@ module Rack::Cache
 
       def initialize(root)
         @root = root
+        @scoped_stats = $statsd.scope("middleware.cache.disk")
         FileUtils.mkdir_p root, :mode => 0755
       end
 
@@ -97,7 +98,9 @@ module Rack::Cache
       end
 
       def read(key)
-        File.open(body_path(key), 'rb') { |f| f.read }
+        @scoped_stats.instrument("reads.content") do
+          File.open(body_path(key), 'rb') { |f| f.read }
+        end
       rescue Errno::ENOENT
         nil
       end
@@ -120,21 +123,23 @@ module Rack::Cache
       end
 
       def write(body, ttl=nil)
-        filename = ['buf', $$, Thread.current.object_id].join('-')
-        temp_file = storage_path(filename)
-        key, size =
-          File.open(temp_file, 'wb') { |dest|
-            slurp(body) { |part| dest.write(part) }
-          }
+        @scoped_stats.instrument("writes.content") do
+          filename = ['buf', $$, Thread.current.object_id].join('-')
+          temp_file = storage_path(filename)
+          key, size =
+            File.open(temp_file, 'wb') { |dest|
+              slurp(body) { |part| dest.write(part) }
+            }
 
-        path = body_path(key)
-        if File.exist?(path)
-          File.unlink temp_file
-        else
-          FileUtils.mkdir_p File.dirname(path), :mode => 0755
-          FileUtils.mv temp_file, path
+          path = body_path(key)
+          if File.exist?(path)
+            File.unlink temp_file
+          else
+            FileUtils.mkdir_p File.dirname(path), :mode => 0755
+            FileUtils.mv temp_file, path
+          end
+          [key, size]
         end
-        [key, size]
       end
 
       def purge(key)

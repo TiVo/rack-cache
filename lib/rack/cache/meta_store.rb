@@ -26,24 +26,36 @@ module Rack::Cache
     # Rack::Cache::Response object if the cache hits or nil if no cache entry
     # was found.
     def lookup(request, entity_store)
-      key = cache_key(request)
-      entries = read(key)
+      result = nil
 
-      # bail out if we have nothing cached
-      return nil if entries.empty?
+      begin
+        result = begin
+          key = cache_key(request)
+          entries = read(key)
 
-      # find a cached entry that matches the request.
-      env = request.env
-      match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
-      return nil if match.nil?
+          # bail out if we have nothing cached
+          return nil if entries.empty?
 
-      _, res = match
-      if body = entity_store.open(res['X-Content-Digest'])
-        restore_response(res, body)
-      else
-        # TODO the metastore referenced an entity that doesn't exist in
-        # the entitystore. we definitely want to return nil but we should
-        # also purge the entry from the meta-store when this is detected.
+          # find a cached entry that matches the request.
+          env = request.env
+          match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
+          return nil if match.nil?
+
+          _, res = match
+          if body = entity_store.open(res['X-Content-Digest'])
+            restore_response(res, body)
+          else
+            # TODO the metastore referenced an entity that doesn't exist in
+            # the entitystore. we definitely want to return nil but we should
+            # also purge the entry from the meta-store when this is detected.
+          end
+        end
+      ensure
+        if result
+          $statsd.increment "middleware.cache.#{self.statsd_name}.HIT"
+        else
+          $statsd.increment "middleware.cache.#{self.statsd_name}.MISS"
+        end
       end
     end
 
@@ -56,26 +68,24 @@ module Rack::Cache
 
       # write the response body to the entity store if this is the
       # original response.
-      if response.headers['X-Content-Digest'].nil?
-        if request.env['rack-cache.use_native_ttl'] && response.fresh?
-          digest, size = entity_store.write(response.body, response.ttl)
-        else
-          digest, size = entity_store.write(response.body)
-        end
-        response.headers['X-Content-Digest'] = digest
-        response.headers['Content-Length'] = size.to_s unless response.headers['Transfer-Encoding']
+      if request.env['rack-cache.use_native_ttl'] && response.fresh?
+        digest, size = entity_store.write(response.body, response.ttl)
+      else
+        digest, size = entity_store.write(response.body)
+      end
+      response.headers['X-Content-Digest'] = digest
+      response.headers['Content-Length'] = size.to_s unless response.headers['Transfer-Encoding']
 
-        # If the entitystore backend is a Noop, do not try to read the body from the backend, it always returns an empty array
-        unless entity_store.is_a? Rack::Cache::EntityStore::Noop
-          # A stream body can only be read once and is currently closed by #write.
-          # (To avoid having to keep giant objects in memory when writing to disk cache
-          # the body is never converted to a single string)
-          # We cannot always reply on body to be re-readable,
-          # so we have to read it from the cache.
-          # BUG: if the cache was unable to store a stream, the stream will be closed
-          #      and rack will try to read it again, resulting in hard to track down exception
-          response.body = entity_store.open(digest) || response.body
-        end
+      # # If the entitystore backend is a Noop, do not try to read the body from the backend, it always returns an empty array
+      unless entity_store.is_a? Rack::Cache::EntityStore::Noop
+        # A stream body can only be read once and is currently closed by #write.
+        # (To avoid having to keep giant objects in memory when writing to disk cache
+        # the body is never converted to a single string)
+        # We cannot always reply on body to be re-readable,
+        # so we have to read it from the cache.
+        # BUG: if the cache was unable to store a stream, the stream will be closed
+        #      and rack will try to read it again, resulting in hard to track down exception
+        response.body = entity_store.open(digest) || response.body
       end
 
       # read existing cache entries, remove non-varying, and add this one to
@@ -230,12 +240,19 @@ module Rack::Cache
 
       def initialize(root="/tmp/rack-cache/meta-#{ARGV[0]}")
         @root = File.expand_path(root)
+        @scoped_stats = $statsd.scope("middleware.cache.disk")
         FileUtils.mkdir_p(root, :mode => 0755)
+      end
+
+      def statsd_name
+        "disk"
       end
 
       def read(key)
         path = key_path(key)
-        File.open(path, 'rb') { |io| Marshal.load(io) }
+        @scoped_stats.instrument("reads.meta") do
+          File.open(path, 'rb') { |io| Marshal.load(io) }
+        end
       rescue Errno::ENOENT, IOError
         []
       end
@@ -244,7 +261,9 @@ module Rack::Cache
         tries = 0
         begin
           path = key_path(key)
-          File.open(path, 'wb') { |io| Marshal.dump(entries, io, -1) }
+          @scoped_stats.instrument("writes.meta") do
+            File.open(path, 'wb') { |io| Marshal.dump(entries, io, -1) }
+          end
         rescue Errno::ENOENT, IOError
           Dir.mkdir(File.dirname(path), 0755)
           retry if (tries += 1) == 1
