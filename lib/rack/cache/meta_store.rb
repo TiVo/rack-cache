@@ -117,20 +117,26 @@ module Rack::Cache
 
     # Invalidate all cache entries that match the request.
     def invalidate(request, entity_store)
-      modified = false
       key = cache_key(request)
-      entries =
-        read(key).map do |req, res|
-          response = restore_response(res)
-          if response.fresh?
-            response.expire!
-            modified = true
-            [req, persist_response(response)]
-          else
-            [req, res]
+
+      if request.env['REQUEST_METHOD'] == 'PURGE'
+        purge(key)
+        entity_store.purge(key)
+      else
+        modified = false
+        entries =
+          read(key).map do |req, res|
+            response = restore_response(res)
+            if response.fresh?
+              response.expire!
+              modified = true
+              [req, persist_response(response)]
+            else
+              [req, res]
+            end
           end
-        end
-      write key, entries if modified
+        write key, entries if modified
+      end
     end
 
   private
