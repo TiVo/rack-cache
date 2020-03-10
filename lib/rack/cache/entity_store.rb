@@ -89,7 +89,7 @@ module Rack::Cache
 
       def initialize(root)
         @root = root
-        @scoped_stats = $statsd.scope("middleware.cache.disk")
+        @scoped_stats = StatsdConfig.client.scope("middleware.cache.disk")
         FileUtils.mkdir_p root, :mode => 0755
       end
 

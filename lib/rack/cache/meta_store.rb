@@ -52,9 +52,9 @@ module Rack::Cache
         end
       ensure
         if result
-          $statsd.increment "middleware.cache.#{self.statsd_name}.HIT"
+          StatsdConfig.client.increment "middleware.cache.#{self.statsd_name}.HIT"
         else
-          $statsd.increment "middleware.cache.#{self.statsd_name}.MISS"
+          StatsdConfig.client.increment "middleware.cache.#{self.statsd_name}.MISS"
         end
       end
     end
@@ -246,7 +246,7 @@ module Rack::Cache
 
       def initialize(root="/tmp/rack-cache/meta-#{ARGV[0]}")
         @root = File.expand_path(root)
-        @scoped_stats = $statsd.scope("middleware.cache.disk")
+        @scoped_stats = StatsdConfig.client.scope("middleware.cache.disk")
         FileUtils.mkdir_p(root, :mode => 0755)
       end
 
