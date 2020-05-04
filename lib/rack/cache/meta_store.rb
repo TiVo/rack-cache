@@ -28,33 +28,25 @@ module Rack::Cache
     def lookup(request, entity_store)
       result = nil
 
-      begin
-        result = begin
-          key = cache_key(request)
-          entries = read(key)
+      result = begin
+        key = cache_key(request)
+        entries = read(key)
 
-          # bail out if we have nothing cached
-          return nil if entries.empty?
+        # bail out if we have nothing cached
+        return nil if entries.empty?
 
-          # find a cached entry that matches the request.
-          env = request.env
-          match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
-          return nil if match.nil?
+        # find a cached entry that matches the request.
+        env = request.env
+        match = entries.detect{|req,res| requests_match?(res['Vary'], env, req)}
+        return nil if match.nil?
 
-          _, res = match
-          if body = entity_store.open(res['X-Content-Digest'])
-            restore_response(res, body)
-          else
-            # TODO the metastore referenced an entity that doesn't exist in
-            # the entitystore. we definitely want to return nil but we should
-            # also purge the entry from the meta-store when this is detected.
-          end
-        end
-      ensure
-        if result
-          StatsdConfig.client.increment "middleware.cache.#{self.statsd_name}.HIT"
+        _, res = match
+        if body = entity_store.open(res['X-Content-Digest'])
+          restore_response(res, body)
         else
-          StatsdConfig.client.increment "middleware.cache.#{self.statsd_name}.MISS"
+          # TODO the metastore referenced an entity that doesn't exist in
+          # the entitystore. we definitely want to return nil but we should
+          # also purge the entry from the meta-store when this is detected.
         end
       end
     end
@@ -246,19 +238,12 @@ module Rack::Cache
 
       def initialize(root="/tmp/rack-cache/meta-#{ARGV[0]}")
         @root = File.expand_path(root)
-        @scoped_stats = StatsdConfig.client.scope("middleware.cache.disk")
         FileUtils.mkdir_p(root, :mode => 0755)
-      end
-
-      def statsd_name
-        "disk"
       end
 
       def read(key)
         path = key_path(key)
-        @scoped_stats.instrument("reads.meta") do
-          File.open(path, 'rb') { |io| Marshal.load(io) }
-        end
+        File.open(path, 'rb') { |io| Marshal.load(io) }
       rescue Errno::ENOENT, IOError
         []
       end
@@ -267,9 +252,7 @@ module Rack::Cache
         tries = 0
         begin
           path = key_path(key)
-          @scoped_stats.instrument("writes.meta") do
-            File.open(path, 'wb') { |io| Marshal.dump(entries, io, -1) }
-          end
+          File.open(path, 'wb') { |io| Marshal.dump(entries, io, -1) }
         rescue Errno::ENOENT, IOError
           Dir.mkdir(File.dirname(path), 0755)
           retry if (tries += 1) == 1
